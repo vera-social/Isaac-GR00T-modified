@@ -27,7 +27,7 @@ from gr00t.data.dataset import LeRobotSingleDataset
 from gr00t.data.schema import EmbodimentTag
 from gr00t.experiment.data_config import DATA_CONFIG_MAP
 from gr00t.experiment.runner import TrainRunner
-from gr00t.model.gr00t_n1 import GR00T_N1
+from gr00t.model.gr00t_n1 import GR00T_N1, GR00T_N1Config
 from gr00t.utils.peft import get_lora_model
 
 
@@ -61,6 +61,9 @@ class Config:
     # Model parameters
     base_model_path: str = "nvidia/GR00T-N1-2B"
     """Path or HuggingFace model ID for the base model."""
+
+    train_from_scratch: bool = False
+    """If True, initialize GR00T with random weights instead of loading base_model_path."""
 
     tune_llm: bool = False
     """Whether to fine-tune the language model backbone."""
@@ -109,8 +112,6 @@ class Config:
     video_backend: str = "decord"
     """Video backend to use for training. [decord, torchvision_av]"""
 
-    train_from_scratch: bool = False
-
 
 #####################################################################################
 # main training function
@@ -132,26 +133,39 @@ def main(config: Config):
         dataset_path=config.dataset_path,
         modality_configs=modality_configs,
         transforms=transforms,
-        embodiment_tag=embodiment_tag,  # This will override the dataset's embodiment tag to "new_embodiment"
+        embodiment_tag=embodiment_tag,  # This will override the dataset's embodiment tag
         video_backend=config.video_backend,
     )
 
-    if config.train_from_scratch:
-        model = GR00T_N1(
-            tune_llm=config.tune_llm,            # whether to train the LLM backbone
-            tune_visual=config.tune_visual,      # whether to train the vision tower
-            tune_projector=config.tune_projector, # whether to train the projector head
-            tune_diffusion_model=config.tune_diffusion_model,  # whether to train the diffusion head
-        )
-
-    else:
     # ------------ step 2: load model ------------
+    if config.train_from_scratch:
+        # Construct a fresh GR00T_N1 from default config (random weights)
+        model_config = GR00T_N1Config()
+        model = GR00T_N1(model_config, local_model_path=None)
+
+        # Manually freeze submodules if the corresponding tune_* flag is False
+        if not config.tune_llm:
+            for param in model.backbone.parameters():
+                param.requires_grad = False
+        if not config.tune_visual:
+            if hasattr(model, "visual_model"):
+                for param in model.visual_model.parameters():
+                    param.requires_grad = False
+        if not config.tune_projector:
+            for param in model.action_head.parameters():
+                param.requires_grad = False
+        if not config.tune_diffusion_model:
+            for param in model.action_head.parameters():
+                param.requires_grad = False
+    else:
+        # Load from pretrained checkpoint (the default behavior)
         model = GR00T_N1.from_pretrained(
             pretrained_model_name_or_path=config.base_model_path,
-            tune_llm=config.tune_llm,  # backbone's LLM
-            tune_visual=config.tune_visual,  # backbone's vision tower
-            tune_projector=config.tune_projector,  # action head's projector
-            tune_diffusion_model=config.tune_diffusion_model,  # action head's DiT
+            tune_llm=config.tune_llm,
+            tune_visual=config.tune_visual,
+            tune_projector=config.tune_projector,
+            tune_diffusion_model=config.tune_diffusion_model,
+            local_model_path=None,
         )
 
     # Set the model's compute_dtype to bfloat16
@@ -251,7 +265,6 @@ if __name__ == "__main__":
             if "CUDA_VISIBLE_DEVICES" in os.environ:
                 del os.environ["CUDA_VISIBLE_DEVICES"]
 
-            # Use subprocess.run instead of os.system
             cmd = [
                 "torchrun",
                 "--standalone",
@@ -260,16 +273,13 @@ if __name__ == "__main__":
                 str(script_path),
             ]
 
-            # Convert config to command line arguments
             for key, value in vars(config).items():
                 if isinstance(value, bool):
-                    # For boolean values, use --flag or --no-flag format
                     if value:
                         cmd.append(f"--{key.replace('_', '-')}")
                     else:
                         cmd.append(f"--no-{key.replace('_', '-')}")
                 else:
-                    # For non-boolean values, use --key value format
                     cmd.append(f"--{key.replace('_', '-')}")
                     cmd.append(str(value))
             print("Running torchrun command: ", cmd)
