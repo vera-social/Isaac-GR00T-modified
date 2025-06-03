@@ -109,6 +109,8 @@ class Config:
     video_backend: str = "decord"
     """Video backend to use for training. [decord, torchvision_av]"""
 
+    train_from_scratch: bool = False
+
 
 #####################################################################################
 # main training function
@@ -134,14 +136,23 @@ def main(config: Config):
         video_backend=config.video_backend,
     )
 
+    if config.train_from_scratch:
+        model = GR00T_N1(
+            tune_llm=config.tune_llm,            # whether to train the LLM backbone
+            tune_visual=config.tune_visual,      # whether to train the vision tower
+            tune_projector=config.tune_projector, # whether to train the projector head
+            tune_diffusion_model=config.tune_diffusion_model,  # whether to train the diffusion head
+        )
+
+    else:
     # ------------ step 2: load model ------------
-    model = GR00T_N1.from_pretrained(
-        pretrained_model_name_or_path=config.base_model_path,
-        tune_llm=config.tune_llm,  # backbone's LLM
-        tune_visual=config.tune_visual,  # backbone's vision tower
-        tune_projector=config.tune_projector,  # action head's projector
-        tune_diffusion_model=config.tune_diffusion_model,  # action head's DiT
-    )
+        model = GR00T_N1.from_pretrained(
+            pretrained_model_name_or_path=config.base_model_path,
+            tune_llm=config.tune_llm,  # backbone's LLM
+            tune_visual=config.tune_visual,  # backbone's vision tower
+            tune_projector=config.tune_projector,  # action head's projector
+            tune_diffusion_model=config.tune_diffusion_model,  # action head's DiT
+        )
 
     # Set the model's compute_dtype to bfloat16
     model.compute_dtype = "bfloat16"
