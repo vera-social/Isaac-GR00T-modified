@@ -133,17 +133,18 @@ def main(config: Config):
         dataset_path=config.dataset_path,
         modality_configs=modality_configs,
         transforms=transforms,
-        embodiment_tag=embodiment_tag,  # This will override the dataset's embodiment tag
+        embodiment_tag=embodiment_tag,
         video_backend=config.video_backend,
     )
 
     # ------------ step 2: load model ------------
     if config.train_from_scratch:
-        # Construct a fresh GR00T_N1 from default config (random weights)
-        model_config = GR00T_N1Config()
+        # Load config from base to populate backbone_cfg, action_head_cfg, etc., but do not load weights
+        model_config = GR00T_N1Config.from_pretrained(config.base_model_path)
+        # Initialize weights randomly
         model = GR00T_N1(model_config, local_model_path=None)
 
-        # Manually freeze submodules if the corresponding tune_* flag is False
+        # Freeze submodules if corresponding tune_* flag is False
         if not config.tune_llm:
             for param in model.backbone.parameters():
                 param.requires_grad = False
@@ -251,17 +252,13 @@ if __name__ == "__main__":
     print(f"Using {config.num_gpus} GPUs")
 
     if config.num_gpus == 1:
-        # Single GPU mode - set CUDA_VISIBLE_DEVICES=0
         os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-        # Run the script normally
         main(config)
     else:
         if os.environ.get("IS_TORCHRUN", "0") == "1":
             main(config)
         else:
-            # Multi-GPU mode - use torchrun
             script_path = Path(__file__).absolute()
-            # Remove any existing CUDA_VISIBLE_DEVICES from environment
             if "CUDA_VISIBLE_DEVICES" in os.environ:
                 del os.environ["CUDA_VISIBLE_DEVICES"]
 
@@ -269,7 +266,7 @@ if __name__ == "__main__":
                 "torchrun",
                 "--standalone",
                 f"--nproc_per_node={config.num_gpus}",
-                "--nnodes=1",  # default to 1 node for now
+                "--nnodes=1",
                 str(script_path),
             ]
 
